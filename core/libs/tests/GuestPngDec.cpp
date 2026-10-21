@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 #include <vector>
 
 extern "C" {
@@ -17,16 +16,6 @@ std::int32_t APS5_VABI scePngDecDecode(void*, const PngDecDecodeParam*, PngDecIm
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
 
 static const std::uint8_t PALETTE_TRNS[] = {
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
@@ -205,11 +194,15 @@ int main() {
     Require(info.image_flag == 2);
 
     const std::vector<std::uint8_t> gray16Png(GRAY16, GRAY16 + sizeof(GRAY16));
-    std::vector<std::uint8_t> gray16Image(2 * 4);
+    std::vector<std::uint8_t> gray16Image(2 * 4, 0xCC);
     decode = DecodeParam(gray16Png, gray16Image);
-    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 1));
-    Require(gray16Image == std::vector<std::uint8_t>({0x12, 0x12, 0x12, 0x77, 0xAB, 0xAB, 0xAB, 0x77}));
-    Require(info.bit_depth == 16);
+    info = {};
+    Require(scePngDecDecode(handle, &decode, &info) == invalidWorkMemory);
+    Require(info.image_width == 2 && info.image_height == 1 && info.bit_depth == 16);
+    Require(std::all_of(gray16Image.begin(), gray16Image.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+    decode.image_mem_size -= 1;
+    Require(scePngDecDecode(handle, &decode, &info) == invalidSize);
+    Require(std::all_of(gray16Image.begin(), gray16Image.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
 
     decode = DecodeParam(rgbPng, image);
     Require(scePngDecDecode(nullptr, &decode, &info) == invalidHandle);
@@ -257,7 +250,9 @@ int main() {
     const PngDecCreateParam deepParam{sizeof(PngDecCreateParam), 1, 1920};
     Require(scePngDecCreate(&deepParam, deepMemory.data(), static_cast<std::uint32_t>(memorySize), &deepHandle) == 0);
     decode = DecodeParam(gray16Png, gray16Image);
-    Require(ThrowsRuntimeError([&] { scePngDecDecode(deepHandle, &decode, &info); }));
+    Require(scePngDecDecode(deepHandle, &decode, &info) == (2 << 16 | 1));
+    Require(gray16Image == std::vector<std::uint8_t>({0x12, 0x12, 0x12, 0x77, 0xAB, 0xAB, 0xAB, 0x77}));
+    Require(info.image_width == 2 && info.image_height == 1 && info.bit_depth == 16);
     decode = DecodeParam(rgbPng, image);
     Require(scePngDecDecode(deepHandle, &decode, &info) == (3 << 16 | 2));
     Require(scePngDecDelete(deepHandle) == 0);
